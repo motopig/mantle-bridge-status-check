@@ -33,6 +33,7 @@ const (
 type WithdrawalStatus struct {
 	sentWaitingMessage  bool // Track if we've sent the initial waiting message
 	sent5MinuteReminder bool // Track if we've sent the 5-minute reminder
+	finalized           bool // Track if this withdrawal has been finalized
 }
 
 // WithdrawalScheduler manages periodic checks for withdrawals
@@ -253,6 +254,12 @@ func (s *WithdrawalScheduler) CheckWithdrawal(txHash string) error {
 		// If already finalized, skip
 		if message.Status >= 2 {
 			log.Printf("  Already finalized, no action needed")
+			
+			// Mark as finalized if not already marked
+			if !status.finalized {
+				status.finalized = true
+			}
+			
 			s.sendTelegramMessage(fmt.Sprintf(
 				"✅ *Already Finalized*\n\n"+
 				"Transaction: `%s`\n"+
@@ -324,9 +331,27 @@ func (s *WithdrawalScheduler) CheckWithdrawal(txHash string) error {
 					"Funds are now available.",
 					txHash))
 
-				// After successful finalization, stop the scheduler and exit cron loop.
-				log.Printf("🛑 Finalize succeeded — stopping scheduler and exiting cron")
-				s.Stop()
+				// Mark this withdrawal as finalized
+				status.finalized = true
+				
+				// Check if all withdrawals are finalized
+				allFinalized := true
+				for _, ws := range s.withdrawalStatus {
+					if !ws.finalized {
+						allFinalized = false
+						break
+					}
+				}
+				
+				if allFinalized {
+					// All withdrawals are finalized, stop the scheduler
+					log.Printf("🛑 All withdrawals finalized — stopping scheduler and exiting cron")
+					s.sendTelegramMessage("🎉 *All Withdrawals Completed!*\n\nAll configured withdrawals have been successfully finalized.")
+					s.Stop()
+				} else {
+					log.Printf("✅ Withdrawal finalized, continuing to monitor remaining withdrawals...")
+				}
+				
 				return nil
 			} else {
 				remainingTime := finalizeTime - currentTime
@@ -529,9 +554,9 @@ func main() {
 		log.Println()
 		log.Println("Examples:")
 		log.Println("  # Single withdrawal")
-		log.Println("  export WITHDRAWAL_TX_HASH=0xe0c400563d9a70f84966622f13a5560bfacfe9621ea554ee7939fd06d2e10417")
+		log.Println("  export WITHDRAWAL_TX_HASH=0x2ddc5affc8b98cf6c9e5157347d726d0b11c79e9697a3d27ec55aa9693f9baf2")
 		log.Println("  # Multiple withdrawals")
-		log.Println("  export WITHDRAWAL_TX_HASH=0xe0c400563d9a70f84966622f13a5560bfacfe9621ea554ee7939fd06d2e10417,0xabc123...")
+		log.Println("  export WITHDRAWAL_TX_HASH=0x2ddc5affc8b98cf6c9e5157347d726d0b11c79e9697a3d27ec55aa9693f9baf2,0xabc123...")
 		log.Println("  go run scheduler.go check")
 		os.Exit(1)
 	}
